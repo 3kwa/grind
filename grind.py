@@ -23,6 +23,16 @@ def main():
     logging.getLogger('paramiko').setLevel(logging.CRITICAL)
     logging.info('start')
 
+    if not os.path.exists(os.path.expanduser('~/.boto')):
+        logging.critical('missing .boto config')
+        logging.info('done')
+        return
+
+    if not os.path.exists(KEY_FILENAME):
+        logging.critical('missing .grind.pem key file')
+        logging.info('done')
+        return
+
     script = sys.argv[1]
     params = ' '.join(sys.argv[2:])
     logging.info('grinding %s %s', script, params)
