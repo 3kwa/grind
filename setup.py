@@ -7,7 +7,7 @@ readme = os.path.join(curdir, 'README.rst')
 
 setup(
     name='grind',
-    version='0.1.1',
+    version='0.1.2',
     description='delegate tasks to EC2 spot instances',
     long_description=open(readme).read(),
     author='Eugene Van den Bulke',
