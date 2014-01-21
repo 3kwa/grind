@@ -70,6 +70,8 @@ class SpotInstance(object):
         self.ami = ami
         self.key_name = key_name
         self.security_group = security_group
+        self.request = None
+        self.instance = None
 
     def __enter__(self):
         """
@@ -77,7 +79,13 @@ class SpotInstance(object):
         """
         self.ec2 = boto.connect_ec2()
         self.price = self.get_spot_price()
-        self.instance = self.request_instance()
+        try:
+            self.request_instance()
+        except:
+            logging.critical("cancel spot instance request")
+            if self.request:
+                self.ec2.cancel_spot_instance_requests([self.request.id, ])
+            sys.exit()
         return self
 
     def __exit__(self, type, value, traceback):
@@ -104,36 +112,37 @@ class SpotInstance(object):
         """
         logging.info('at %s', self.price.price)
 
-        request = self.ec2.request_spot_instances(
+        self.request = self.ec2.request_spot_instances(
             self.price.price,
             self.ami,
             key_name=self.key_name,
             security_groups=[self.security_group, ]).pop()
 
-        while request.status.code != 'fulfilled' and \
-              request.status.code != 'price-too-low':
-            logging.info('request status %s', request.status.code)
+        while self.request.status.code != 'fulfilled' and \
+              self.request.status.code != 'price-too-low':
+            logging.info('request status %s', self.request.status.code)
             time.sleep(WAIT)
-            request = self.ec2.get_all_spot_instance_requests(request_ids=[request.id,]).pop()
+            ids = [self.request.id, ]
+            self.request = self.ec2.get_all_spot_instance_requests(request_ids=ids).pop()
 
-        if request.status.code == 'price-too-low':
-            logging.info('request status %s', request.status.code)
+        if self.request.status.code == 'price-too-low':
+            logging.info('request status %s', self.request.status.code)
             logging.info('done')
             return
 
-        logging.info('instance %s', request.instance_id)
-        reservation = self.ec2.get_all_reservations(instance_ids=[request.instance_id, ]).pop()
-        instance = reservation.instances[0]
-        self.ec2.create_tags([instance.id], {'Name': 'grind'})
+        logging.info('instance %s', self.request.instance_id)
+        ids = [self.request.instance_id, ]
+        reservation = self.ec2.get_all_reservations(instance_ids=ids).pop()
+        self.instance = reservation.instances[0]
+        self.ec2.create_tags([self.instance.id], {'Name': 'grind'})
 
-        logging.info('%s state %s', instance.id, instance.state)
-        while instance.state != 'running':
+        logging.info('%s state %s', self.instance.id, self.instance.state)
+        while self.instance.state != 'running':
             time.sleep(WAIT)
-            instance.update()
-            logging.info('%s state %s', instance.id, instance.state)
+            self.instance.update()
+            logging.info('%s state %s', self.instance.id, self.instance.state)
 
-        logging.info('return %s', instance.id)
-        return instance
+        logging.info('return %s', self.instance.id)
 
     def terminate(self):
         """
