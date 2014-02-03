@@ -5,7 +5,7 @@ GRIND runs jobs on EC2 spot instances
 import logging
 import time
 import sys
-import os.path
+import os
 import ConfigParser
 
 import boto
@@ -14,7 +14,7 @@ import paramiko
 
 FORMAT = "%(asctime)s %(levelname)8s %(funcName)-20s %(message)s"
 WAIT = 60
-KEY_FILENAME = os.path.join(os.path.expanduser('~'), '.grind.pem')
+KEY_FILENAME = os.path.join(os.path.expanduser('~'), 'grind.pem')
 
 
 def main():
@@ -25,11 +25,6 @@ def main():
 
     if not os.path.exists(os.path.expanduser('~/.boto')):
         logging.critical('missing .boto config')
-        logging.info('done')
-        return
-
-    if not os.path.exists(KEY_FILENAME):
-        logging.critical('missing .grind.pem key file')
         logging.info('done')
         return
 
@@ -45,7 +40,9 @@ def main():
     except (ConfigParser.NoSectionError, ConfigParser.NoOptionError):
         before = []
 
-    with SpotInstance(config.get('aws', 'instance_type'),
+    with KeyPair('grind'), \
+         SecurityGroup('grind'), \
+         SpotInstance(config.get('aws', 'instance_type'),
                       config.get('aws', 'product_description'),
                       config.get('aws', 'ami'),
                       config.get('aws', 'key_name'),
@@ -55,6 +52,45 @@ def main():
 
     logging.info('done')
 
+
+class KeyPair(object):
+
+    def __init__(self, name):
+        self.name = name
+
+    def __enter__(self):
+        self.ec2 = boto.connect_ec2()
+        pairs = self.ec2.get_all_key_pairs()
+        pair = [pair for pair in pairs if pair.name == self.name]
+        if pair:
+            logging.warning('%s already exists', self.name)
+            pair.pop().delete()
+        self.pair = self.ec2.create_key_pair(self.name)
+        self.pair.save(os.path.expanduser('~'))
+        return self
+
+    def __exit__(self, type, value, traceback):
+        self.pair.delete()
+        os.unlink(os.path.join(os.path.expanduser('~'), '{0}.pem'.format(self.name)))
+
+class SecurityGroup(object):
+
+    def __init__(self, name):
+        self.name = name
+
+    def __enter__(self):
+        self.ec2 = boto.connect_ec2()
+        groups = self.ec2.get_all_security_groups()
+        group = [group for group in groups if group.name == self.name]
+        if group:
+            logging.warning('%s already exists', self.name)
+            group.pop().delete()
+        self.group = self.ec2.create_security_group(self.name, 'transient')
+        self.group.authorize('tcp', 22, 22, '0.0.0.0/0')
+        return self
+
+    def __exit__(self, type, value, traceback):
+        self.group.delete()
 
 class SpotInstance(object):
     """
