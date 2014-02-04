@@ -14,7 +14,8 @@ import paramiko
 
 FORMAT = "%(asctime)s %(levelname)8s %(funcName)-20s %(message)s"
 WAIT = 60
-KEY_FILENAME = os.path.join(os.path.expanduser('~'), 'grind.pem')
+KEY_NAME = SECURITY_GROUP = 'grind'
+KEY_FILENAME = os.path.join(os.path.expanduser('~'), '{0}.pem'.format(KEY_NAME))
 
 
 def main():
@@ -33,7 +34,13 @@ def main():
     logging.info('grinding %s %s', script, params)
 
     config = ConfigParser.ConfigParser()
-    config.readfp(open(os.path.join(os.path.dirname(script),'grind.cfg')))
+    cfg = '{0}.cfg'.format(script)
+    try:
+        config.readfp(open(cfg))
+    except IOError:
+	logging.critical('missing %s', cfg)
+        logging.info('done')
+        return 
 
     try:
         before = config.get('ssh', 'before').strip().split('\n')
@@ -45,8 +52,8 @@ def main():
          SpotInstance(config.get('aws', 'instance_type'),
                       config.get('aws', 'product_description'),
                       config.get('aws', 'ami'),
-                      config.get('aws', 'key_name'),
-                      config.get('aws', 'security_group')) as spot:
+                      KEY_NAME,
+                      SECURITY_GROUP) as spot:
 
         spot.run(script, params, before)
 
@@ -59,6 +66,14 @@ class KeyPair(object):
         self.name = name
 
     def __enter__(self):
+	self.key_pair()
+        return self
+
+    def key_pair(self):
+        """
+        Create or replace key pair
+        """
+        logging.info('start')
         self.ec2 = boto.connect_ec2()
         pairs = self.ec2.get_all_key_pairs()
         pair = [pair for pair in pairs if pair.name == self.name]
@@ -67,7 +82,7 @@ class KeyPair(object):
             pair.pop().delete()
         self.pair = self.ec2.create_key_pair(self.name)
         self.pair.save(os.path.expanduser('~'))
-        return self
+        logging.info('done')
 
     def __exit__(self, type, value, traceback):
         self.pair.delete()
@@ -78,7 +93,11 @@ class SecurityGroup(object):
     def __init__(self, name):
         self.name = name
 
-    def __enter__(self):
+    def security_group(self):
+        """
+        Create or replace security group
+        """
+        logging.info('start')
         self.ec2 = boto.connect_ec2()
         groups = self.ec2.get_all_security_groups()
         group = [group for group in groups if group.name == self.name]
@@ -87,6 +106,10 @@ class SecurityGroup(object):
             group.pop().delete()
         self.group = self.ec2.create_security_group(self.name, 'transient')
         self.group.authorize('tcp', 22, 22, '0.0.0.0/0')
+        logging.info('done')
+
+    def __enter__(self):
+        self.security_group()
         return self
 
     def __exit__(self, type, value, traceback):
@@ -190,6 +213,7 @@ class SpotInstance(object):
 
         logging.info('instance %s', self.instance.id)
         self.instance.terminate()
+        time.sleep(WAIT) # can't delete security group with a running instance
         logging.info('done')
 
     def run(self, script, params, before):
